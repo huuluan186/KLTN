@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDiseases } from "../../hooks/useDiseases";
 import type { RiskEntry } from "../../types/api";
 import type { DiseaseId } from "../../types/domain";
@@ -14,6 +14,8 @@ interface Props {
 
 type SortOption = "score-desc" | "score-asc" | "name-asc" | "name-desc";
 
+const PAGE_SIZE = 8;
+
 export default function AlertsSidebar({
   entries,
   disease,
@@ -22,8 +24,12 @@ export default function AlertsSidebar({
   onSelect,
 }: Props) {
   const [sortBy, setSortBy] = useState<SortOption>("score-desc");
+  const [page, setPage] = useState(1);
+  const listRef = useRef<HTMLDivElement>(null);
   const { getDisease } = useDiseases();
   const activeDisease = getDisease(disease);
+
+  const scrollToTop = () => listRef.current?.scrollTo({ top: 0 });
 
   const filtered = useMemo(() => {
     const list: AlertCountry[] = entries
@@ -47,6 +53,26 @@ export default function AlertsSidebar({
     return list;
   }, [entries, disease, iso2ByIso3, sortBy]);
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageItems = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  // Đổi bệnh / danh sách rút ngắn → về trang 1 để không kẹt ở trang không còn tồn tại.
+  useEffect(() => {
+    setPage(1);
+  }, [disease]);
+
+  const goToPage = (next: number) => {
+    setPage(Math.min(Math.max(1, next), totalPages));
+    scrollToTop();
+  };
+
+  const changeSort = (value: SortOption) => {
+    setSortBy(value);
+    setPage(1);
+    scrollToTop();
+  };
+
   const selectClass =
     "h-[26px] flex-1 min-w-[80px] bg-[var(--color-panel-inset)] border border-[var(--color-panel-border)] rounded-[5px] text-white text-[11px] px-1.5 cursor-pointer focus:outline-none focus:border-white";
   const labelClass =
@@ -56,12 +82,12 @@ export default function AlertsSidebar({
     <div className="flex-1 min-h-0 bg-transparent flex flex-col overflow-hidden border-t border-[var(--color-focus-border)]">
       <div className="px-4 py-3 border-b border-[var(--color-focus-border)] bg-[var(--color-focus-raised)] flex items-center justify-between">
         <h3 className="m-0 flex gap-2 items-center">
-          <span className="dashboard-panel-title">Cảnh báo</span>
+          <span className="dashboard-panel-title">Danh sách cảnh báo</span>
           <span className="bg-[var(--color-panel-inset)] border border-[var(--color-panel-border)] text-slate-100 text-[11px] px-[7px] py-px rounded-[10px]">
-            {filtered.length}
+            {filtered.length} quốc gia
           </span>
         </h3>
-        <span className="text-[11px] font-medium text-slate-100">
+        <span className="text-[11px] font-bold text-slate-100 uppercase">
           {activeDisease.label}
         </span>
       </div>
@@ -71,7 +97,7 @@ export default function AlertsSidebar({
         <select
           className={selectClass}
           value={sortBy}
-          onChange={(e) => setSortBy(e.target.value as SortOption)}
+          onChange={(e) => changeSort(e.target.value as SortOption)}
         >
           <option value="score-desc">Mức độ: cao đến thấp</option>
           <option value="score-asc">Mức độ: thấp đến cao</option>
@@ -80,13 +106,13 @@ export default function AlertsSidebar({
         </select>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div ref={listRef} className="flex-1 overflow-y-auto">
         {filtered.length === 0 && (
           <div className="p-6 text-center text-slate-100 text-xs">
             Không có cảnh báo nào khớp với bộ lọc hiện tại.
           </div>
         )}
-        {filtered.map((item) => (
+        {pageItems.map((item) => (
           <AlertItem
             key={item.iso3}
             item={item}
@@ -95,6 +121,30 @@ export default function AlertsSidebar({
           />
         ))}
       </div>
+
+      {totalPages > 1 && (
+        <div className="px-3 py-2 border-t border-[var(--color-panel-border)] bg-[var(--color-focus-raised)] flex items-center justify-between gap-2">
+          <button
+            onClick={() => goToPage(safePage - 1)}
+            disabled={safePage <= 1}
+            className="h-[26px] px-2.5 grid place-items-center bg-[var(--color-panel-inset)] border border-[var(--color-panel-border)] rounded-[5px] text-white text-[11px] hover:border-white disabled:opacity-35 disabled:cursor-not-allowed"
+            aria-label="Trang trước"
+          >
+            ‹ Trước
+          </button>
+          <span className="text-[11px] text-slate-100 tabular-nums">
+            Trang {safePage}/{totalPages}
+          </span>
+          <button
+            onClick={() => goToPage(safePage + 1)}
+            disabled={safePage >= totalPages}
+            className="h-[26px] px-2.5 grid place-items-center bg-[var(--color-panel-inset)] border border-[var(--color-panel-border)] rounded-[5px] text-white text-[11px] hover:border-white disabled:opacity-35 disabled:cursor-not-allowed"
+            aria-label="Trang sau"
+          >
+            Sau ›
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import type { RiskMapPeriod } from "../../types/api";
 import type { DiseaseId } from "../../types/domain";
+import { isTrainingYear } from "../../lib/trainingWindow";
 import Icon from "../common/Icon";
 
 interface Props {
@@ -47,8 +48,11 @@ function getRange(periods: RiskMapPeriod[], year: number, latest: { year: number
 
 function getHintText(periods: RiskMapPeriod[], year: number, latest: { year: number; week: number }) {
   const { min } = getRange(periods, year, latest);
+  if (isTrainingYear(year)) {
+    return "Backtest (2010-2019): năm đã huấn luyện, kết quả in-sample — chỉ để đối chiếu, không phản ánh năng lực trên dữ liệu mới";
+  }
   if (year !== latest.year) {
-    return "Kiểm thử quá khứ: xem lại dự báo trên dữ liệu đã có để so sánh/đánh giá";
+    return "Dự báo out-of-sample: xem lại một tuần đã chọn ngoài tập huấn luyện";
   }
   return `Mới nhất: Năm ${year}, Tuần ${String(min).padStart(2, "0")} đến Tuần ${String(latest.week).padStart(2, "0")}`;
 }
@@ -69,8 +73,12 @@ export default function WeekPicker({
   const { min: minWeek, max: maxWeek } = getRange(validPeriods, safeYear, latest);
   const safeWeek = Math.min(Math.max(week, minWeek), maxWeek);
   const pct = maxWeek > minWeek ? ((safeWeek - minWeek) / (maxWeek - minWeek)) * 100 : 0;
-  const latestOption = { year: latest.year, label: `${latest.year} (Tuần ${String(latest.week).padStart(2, "0")})` };
-  const backtestPeriods = validPeriods.filter((period) => period.iso_year !== latest.year);
+  // Tách theo cửa sổ huấn luyện, không theo "có phải năm mới nhất không":
+  // năm out-of-sample (2022, 2026...) là dự báo thật, chỉ 2010-2019 mới là backtest.
+  const operationalPeriods = validPeriods.filter((period) => !isTrainingYear(period.iso_year));
+  const backtestPeriods = validPeriods.filter((period) => isTrainingYear(period.iso_year));
+  const yearOptionLabel = (y: number) =>
+    y === latest.year ? `${y} (Tuần ${String(latest.week).padStart(2, "0")})` : String(y);
 
   return (
     <div>
@@ -86,11 +94,15 @@ export default function WeekPicker({
           }}
           className="flex-1 h-[30px] bg-[#245b8f] border border-[#60a5fa] rounded-md text-white text-xs font-bold px-2 text-center cursor-pointer focus:outline-none focus:border-white"
         >
-          <optgroup label="Mới nhất / dữ liệu vận hành">
-            <option value={latestOption.year}>{latestOption.label}</option>
+          <optgroup label="Dữ liệu vận hành / dự báo">
+            {operationalPeriods.map((period) => (
+              <option key={period.iso_year} value={period.iso_year}>
+                {yearOptionLabel(period.iso_year)}
+              </option>
+            ))}
           </optgroup>
           {backtestPeriods.length > 0 && (
-            <optgroup label="Kiểm thử quá khứ">
+            <optgroup label="Backtest (năm đã huấn luyện)">
               {backtestPeriods.map((period) => (
                 <option key={period.iso_year} value={period.iso_year}>
                   {period.iso_year}

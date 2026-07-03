@@ -10,17 +10,21 @@ const YEAR_START = 2010;
 const YEAR_END = 2019;
 const WEEKS = 53;
 
-// Thang màu YlOrRd giống cmap notebook, đủ sáng để rõ trên nền tối/máy chiếu.
-const YL_OR_RD = [
-	"#fffbcc",
-	"#fee391",
-	"#fec44f",
-	"#fb9a29",
-	"#ec7014",
-	"#cc4c02",
-	"#993404",
-	"#662506",
+// Phổ xanh dương sáng → navy đậm. Bắt đầu từ xanh trung bình (không gần trắng)
+// để ô ca thấp vẫn rõ trên nền trắng; đỉnh dịch thành navy đậm, nổi bật nhất.
+const SEQ_BLUES = [
+	"#93c5fd",
+	"#60a5fa",
+	"#3b82f6",
+	"#2563eb",
+	"#1d4ed8",
+	"#1e40af",
+	"#172554",
 ];
+
+// Màu ô không có báo cáo (missing). Xám trung tính, phân biệt rõ với nền trắng
+// lẫn với ô ca = 0 (vốn tô xanh nhạt nhất).
+const NO_DATA_COLOR = "#94a3b8";
 
 interface Props {
 	points: HistoryPoint[];
@@ -58,7 +62,9 @@ export default function SeasonalHeatmap({ points, disease }: Props) {
 
 		ch.setOption({
 			backgroundColor: "transparent",
-			grid: { top: 8, right: 12, bottom: 84, left: 52 },
+			// show + backgroundColor tô nền vùng lưới bằng màu xám: mọi ô không có
+			// heatmap item (tuần thiếu báo cáo) sẽ lộ nền xám này.
+			grid: { top: 8, right: 12, bottom: 84, left: 52, show: true, backgroundColor: NO_DATA_COLOR, borderWidth: 0 },
 			tooltip: {
 				position: "top",
 				backgroundColor: "#ffffff",
@@ -99,7 +105,7 @@ export default function SeasonalHeatmap({ points, disease }: Props) {
 				itemWidth: 14,
 				itemHeight: 180,
 				textStyle: { color: "#334155", fontSize: 11 },
-				inRange: { color: YL_OR_RD },
+				inRange: { color: SEQ_BLUES },
 			},
 			series: [
 				{

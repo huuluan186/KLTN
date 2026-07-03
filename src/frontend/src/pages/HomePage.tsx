@@ -15,6 +15,7 @@ import { useForecast } from "../hooks/useForecast";
 import { usePrediction } from "../hooks/usePrediction";
 import { useLatestRiskMap, useRiskMap, useRiskMapPeriods } from "../hooks/useRiskMap";
 import { ECHARTS_COUNTRY_NAMES, ISO3_BY_ECHARTS_NAME } from "../lib/mockRisk";
+import { isTrainingYear } from "../lib/trainingWindow";
 import { useUIStore } from "../store/uiStore";
 import type { RiskEntry } from "../types/api";
 import type { DiseaseId, RiskLevel } from "../types/domain";
@@ -100,6 +101,11 @@ export default function HomePage() {
 	const latestWeek = riskPeriods.periods?.latest_week ?? latest.meta?.week;
 	const activeYear = isHistorical ? applied!.year : (latestYear ?? year);
 	const activeWeek = isHistorical ? applied!.week : (latestWeek ?? week);
+	// Nhãn header phản ánh nguồn dữ liệu (methodology), KHÔNG phải chế độ ghim tuần:
+	// - Năm 2010-2019 → in-sample, model đã thấy lúc train → BACKTEST (cảnh báo).
+	// - Năm out-of-sample (2022, 2026...) → dự báo thật; nếu đang bám tuần mới nhất
+	//   thì là MỚI NHẤT, nếu ghim tuần cũ thì là DỰ BÁO.
+	const isInSample = isTrainingYear(activeYear);
 
 	// Thu hút sự chú ý vào sidebar kết quả khi request filter hoàn tất.
 	const wasFetchingRef = useRef(false);
@@ -278,9 +284,19 @@ export default function HomePage() {
 							Bản đồ rủi ro toàn cầu · {activeDisease.label}
 						</h2>
 						<div className="flex items-center gap-2 text-xs text-[var(--color-text-3)]">
-							{isHistorical ? (
-								<span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-semibold tracking-wide">
+							{isInSample ? (
+								<span
+									className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-semibold tracking-wide"
+									title="Năm nằm trong tập huấn luyện 2010-2019 — kết quả in-sample, cao hơn năng lực thực trên dữ liệu mới"
+								>
 									BACKTEST
+								</span>
+							) : isHistorical ? (
+								<span
+									className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 font-semibold tracking-wide"
+									title="Dự báo out-of-sample cho một tuần đã chọn (ngoài tập huấn luyện)"
+								>
+									DỰ BÁO
 								</span>
 							) : (
 								<span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-semibold tracking-wide">
@@ -492,14 +508,19 @@ export default function HomePage() {
 																		</div>
 																	</div>
 																	<span
-																		className="rounded px-1.5 py-0.5 text-[9px] font-bold text-white"
+																		className="inline-block rounded px-1.5 py-0.5 text-[9px] font-bold leading-tight text-white"
 																		style={{
 																			backgroundColor: hasRiskLevel
 																				? pointRiskDef.color
 																				: "var(--color-panel-border)",
 																		}}
+																		title={
+																			hasRiskLevel
+																				? undefined
+																				: "Quốc gia này chưa có đủ dữ liệu lịch sử 2010-2018 để tính ngưỡng endemic channel — không phải lỗi dự báo, chỉ là thiếu baseline để xếp mức."
+																		}
 																	>
-																		{hasRiskLevel ? pointRiskDef.label : "Chưa phân mức"}
+																		{hasRiskLevel ? pointRiskDef.label : "Thiếu dữ liệu lịch sử"}
 																	</span>
 																	<div className="mt-1 text-[10px] font-semibold text-slate-100 tabular-nums">
 																		Dự báo {predictedCases} ca

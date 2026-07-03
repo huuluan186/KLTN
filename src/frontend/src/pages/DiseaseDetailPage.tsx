@@ -14,6 +14,7 @@ import FeatureTooltip from "../components/common/FeatureTooltip";
 import InfoTooltip from "../components/common/InfoTooltip";
 import { attachChartResize } from "../lib/echartsResize";
 import { ECHARTS_COUNTRY_NAMES } from "../lib/mockRisk";
+import { isTrainingYear } from "../lib/trainingWindow";
 import { DISEASE_DEFAULTS, useUIStore } from "../store/uiStore";
 import type { AvailableCountry, HistoryPoint } from "../types/api";
 import type { DiseaseId, RiskLevel } from "../types/domain";
@@ -26,11 +27,43 @@ function formatFeatureValue(feature: string, value: number | null): string {
 	if (/precip_mm/.test(feature)) return `${value.toFixed(1)} mm`;
 	if (/iso_year/.test(feature)) return String(Math.round(value));
 	if (/HEMISPHERE/.test(feature)) return value === 1 ? "Có" : "Không";
-	if (/iso_week_sin|iso_week_cos/.test(feature)) return value.toFixed(3);
+	if (/iso_week_sin|iso_week_cos|_week$/.test(feature)) return value.toFixed(3);
+	// Biến số ca ở thang log1p (lag/rollmean) — đổi ngược expm1 về số ca thật cho
+	// người đọc hiểu, thay vì hiện giá trị log khó hình dung (2.99 → ~19 ca).
+	if (/_log_(lag|rollmean)/.test(feature)) {
+		return `≈ ${Math.round(Math.max(0, Math.expm1(value))).toLocaleString("vi-VN")} ca`;
+	}
+	// Velocity/accel là hiệu của log (tốc độ/gia tốc thay đổi), không đổi ngược
+	// về số ca được — giữ dạng thập phân, có dấu để biết đang tăng hay giảm.
+	if (/_log_(velocity|accel)/.test(feature)) {
+		return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+	}
 	return value.toFixed(3);
 }
 
 type Period = { year: number; week: number };
+
+// Cửa sổ ~52 tuần LỊCH kết thúc tại tuần as_of đã áp dụng (không phải tuần mới
+// nhất). Dùng ordinal (năm*53+tuần): giữ các tuần trong [as_of-51, as_of], nhờ
+// vậy khi user đổi filter thì đường xu hướng dịch theo, và không bị dán đuôi năm
+// cũ vào (flu thiếu data 2020-2025). Dùng chung cho biểu đồ và nhãn tiêu đề để
+// khoảng hiển thị luôn khớp với đường vẽ.
+function sliceTrendWindow(points: HistoryPoint[], asOf: Period): HistoryPoint[] {
+	const ordinal = (year: number, week: number) => year * 53 + week;
+	const end = ordinal(asOf.year, asOf.week);
+	const start = end - 51;
+	return points
+		.filter((p) => {
+			const o = ordinal(p.iso_year, p.iso_week);
+			return o >= start && o <= end;
+		})
+		.slice(-52);
+}
+
+function weekLabel(year: number, week: number) {
+	return `Tuần ${String(week).padStart(2, "0")}/${year}`;
+}
+
 function getLatestPeriod(
 	disease: DiseaseId,
 	latestYear: number | null,
@@ -74,16 +107,24 @@ function modelConfidence(r2: number | null) {
 	}
 	return { label: "Thấp", color: "var(--color-risk-high)" };
 }
-function TrendChart({ points, disease }: { points: HistoryPoint[]; disease: "flu" | "dengue" }) {
+function TrendChart({
+	points,
+	disease,
+	asOf,
+}: {
+	points: HistoryPoint[];
+	disease: "flu" | "dengue";
+	asOf: Period;
+}) {
 	const elRef = useRef<HTMLDivElement>(null);
 	const color = disease === "flu" ? "#2563eb" : "#f59e0b";
 	const series = useMemo(() => {
-		const slice = points.slice(-52);
+		const slice = sliceTrendWindow(points, asOf);
 		return {
-			labels: slice.map((p) => `Tuần ${String(p.iso_week).padStart(2, "0")}/${p.iso_year}`),
+			labels: slice.map((p) => weekLabel(p.iso_year, p.iso_week)),
 			values: slice.map((p) => p.predicted_cases ?? p.actual_cases ?? null),
 		};
-	}, [points]);
+	}, [points, asOf.year, asOf.week]);
 
 	useEffect(() => {
 		if (!elRef.current) return;
@@ -205,8 +246,11 @@ export default function DiseaseDetailPage() {
 		validYears.includes(uiYear) &&
 		uiWeek >= selectedWeekRange.min &&
 		uiWeek <= selectedWeekRange.max;
-	const historyStartYear = validYears.length ? Math.min(...validYears) : latestPeriod.year;
-	const historyEndYear = latestPeriod.year;
+	// Xu hướng 52 tuần bám theo tuần as_of đã áp dụng: lấy năm đó + năm trước
+	// (đủ dữ liệu cho cửa sổ 52 tuần khi as_of nằm đầu năm), không giới hạn 52
+	// dòng mới nhất — nếu không sẽ dán đuôi năm cũ vào, sai cửa sổ.
+	const trendStartYear = activePeriod.year - 1;
+	const trendEndYear = activePeriod.year;
 	const isLatestMode = displayYear === latestPeriod.year && displayWeek === latestPeriod.week;
 	const isHistoricalMode = !isLatestMode;
 	const isFilterDirty = uiYear !== activePeriod.year || uiWeek !== activePeriod.week;
@@ -261,7 +305,19 @@ export default function DiseaseDetailPage() {
 		history,
 		isLoading: historyLoading,
 		isError: historyError,
-	} = useHistory(disease, iso3, historyStartYear, historyEndYear, 52);
+	} = useHistory(disease, iso3, trendStartYear, trendEndYear);
+	// Khoảng thời gian thực tế của biểu đồ xu hướng — lấy từ cùng cửa sổ với đường
+	// vẽ để tiêu đề khớp data (vd 2026 thiếu 2025 nên bắt đầu ở tuần 02/2026).
+	const trendWindowPts = useMemo(
+		() => sliceTrendWindow(history?.points ?? [], activePeriod),
+		[history, activePeriod],
+	);
+	const trendRangeLabel = trendWindowPts.length
+		? `${weekLabel(trendWindowPts[0].iso_year, trendWindowPts[0].iso_week)} – ${weekLabel(
+				trendWindowPts[trendWindowPts.length - 1].iso_year,
+				trendWindowPts[trendWindowPts.length - 1].iso_week,
+			)}`
+		: null;
 	// Lịch sử đầy đủ 2010-2019 (không giới hạn 52 tuần) cho heatmap mùa vụ.
 	const {
 		history: seasonalHistory,
@@ -400,13 +456,17 @@ export default function DiseaseDetailPage() {
 							<div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-1)]">
 								Dự báo 4 tuần · {d.label}
 								<InfoTooltip text="Đường đậm là số ca dự báo cho 4 tuần kế tiếp. Dải mờ quanh đường là khoảng tin cậy ±RMSE (sai số toàn phương trung bình của mô hình theo walk-forward CV), đã quy đổi ngược từ thang log1p về số ca. Dải càng hẹp thì dự báo càng chắc." />
-								{isLatestMode && (
-									<span className="ml-2 text-[10px] font-normal text-emerald-400">● mới nhất</span>
-								)}
-								{isHistoricalMode && (
-									<span className="ml-2 text-[10px] font-normal text-amber-400">
-										● kiểm thử quá khứ
+								{isTrainingYear(displayYear) ? (
+									<span
+										className="ml-2 text-[10px] font-normal text-amber-400"
+										title="Năm 2010-2019 nằm trong tập huấn luyện — kết quả in-sample, chỉ để đối chiếu"
+									>
+										● backtest (đã huấn luyện)
 									</span>
+								) : isLatestMode ? (
+									<span className="ml-2 text-[10px] font-normal text-emerald-400">● mới nhất</span>
+								) : (
+									<span className="ml-2 text-[10px] font-normal text-sky-400">● dự báo</span>
 								)}
 							</div>
 							{forecast && (
@@ -521,7 +581,12 @@ export default function DiseaseDetailPage() {
 
 				<div className="light-card bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-[0_2px_8px_rgba(15,23,42,0.08)] p-5">
 					<div className="text-[13px] font-semibold text-[var(--color-text-1)] mb-4">
-						Xu hướng 52 tuần · {d.label}
+						Xu hướng 1 năm · {d.label}
+						{trendRangeLabel && (
+							<span className="ml-1 font-normal text-[var(--color-text-3)]">
+								({trendRangeLabel})
+							</span>
+						)}
 					</div>
 					{historyLoading && (
 						<div className="h-[220px] grid place-items-center text-[var(--color-text-3)] text-xs">
@@ -534,17 +599,21 @@ export default function DiseaseDetailPage() {
 						</div>
 					)}
 					{!historyLoading && !historyError && history && history.points.length > 0 && (
-						<TrendChart points={history.points} disease={disease} />
+						<TrendChart points={history.points} disease={disease} asOf={activePeriod} />
 					)}
 				</div>
 
 				<div className="light-card bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-[0_2px_8px_rgba(15,23,42,0.08)] p-5">
 					<div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-1)] mb-1">
-						Tín hiệu đầu vào tuần này · {d.label}
-						<InfoTooltip text="Giá trị thực tế của các biến đầu vào mà mô hình sử dụng để dự báo cho tuần này tại quốc gia này. ▲ (đỏ) = biến đang đẩy dự báo số ca tăng; ▼ (xanh) = đẩy dự báo giảm. Thanh ngang cho biết mức ảnh hưởng tổng thể của biến trong mô hình." />
+						Yếu tố tác động tới dự báo · {d.label}
+						<InfoTooltip text="Mô hình dự báo số ca dựa trên nhiều yếu tố: số ca các tuần trước và thời tiết ở các độ trễ khác nhau. Bảng này liệt kê các yếu tố quan trọng nhất, kèm giá trị của chúng tại tuần đang xem và chiều tác động lên dự báo." />
 					</div>
-					<div className="mb-4 text-[11px] text-[var(--color-text-3)]">
-						Dữ liệu đầu vào tại {countryName}, Tuần {String(displayWeek).padStart(2, "0")} · Năm {displayYear}
+					<div className="text-[11px] text-[var(--color-text-3)]">
+						{countryName}, Tuần {String(displayWeek).padStart(2, "0")} · Năm {displayYear}
+					</div>
+					<div className="mb-4 mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-[var(--color-text-3)]">
+						<span><span className="text-rose-500 font-bold">▲</span>/<span className="text-emerald-500 font-bold">▼</span> giá trị tuần này đẩy dự báo tăng / giảm</span>
+						<span>Thanh % = mức độ quan trọng của yếu tố trong mô hình (chung, không đổi theo tuần)</span>
 					</div>
 					{signalsLoading && (
 						<div className="h-[200px] grid place-items-center text-[var(--color-text-3)] text-xs">
