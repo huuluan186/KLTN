@@ -1,0 +1,13 @@
+# Không đưa vào Docker build context: build lại trong image nên không cần,
+# và tránh .env.local ghi đè VITE_API_BASE_URL (bake cứng localhost:8000, bỏ qua
+# nginx proxy). Bỏ file này ra để build luôn dùng /api/v1 → nginx proxy sang backend.
+node_modules
+dist
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+.vite
+.git
+Dockerfile
+.dockerignore
