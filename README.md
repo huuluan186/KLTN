@@ -13,7 +13,7 @@ cho mỗi quốc gia.
 vào mùa lạnh; sốt xuất huyết bùng theo chu kỳ sinh sản của muỗi sau các đợt mưa và ẩm.
 Đồ án lượng hóa quan hệ trễ này bằng cross-correlation rồi đưa vào mô hình học máy để dự báo.
 
-![Dashboard EpiWeather — Bản đồ rủi ro toàn cầu](frontend/public/Dashboard.png)
+![Dashboard EpiWeather — Bản đồ rủi ro toàn cầu](src/frontend/public/Dashboard.png)
 
 ## Mục tiêu
 
