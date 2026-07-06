@@ -8,13 +8,19 @@ Mục đích:
   populate prediction cho tuần realtime.
 
 Pipeline:
-  1. Load ML models (regressor h=1 + classifier) vào memory
+  1. Load ML models (regressor h=1) vào memory
   2. Với mỗi disease (flu, dengue):
      - Tìm tuần (iso_year, iso_week) MỚI NHẤT có feature_snapshot
      - Với mỗi iso3 có snapshot tuần đó:
-       * Predict h=1 → predicted_cases
-       * Predict classifier → risk_level
+       * Predict h=1 → predicted_cases (regressor)
+       * risk_level = endemic channel Bortman: đối chiếu predicted_cases với
+         ngưỡng (mean, mean+2σ) theo (iso3, iso_week) từ kỳ tham chiếu training
        * UPSERT vào predictions (ON CONFLICT idx_predictions_unique)
+
+  Ghi chú: mức nguy cơ trên bản đồ suy TRỰC TIẾP từ số ca dự báo của regressor
+  qua ngưỡng endemic channel (Bortman 1999), KHÔNG dùng XGBClassifier — để
+  risk_level luôn nhất quán với predicted_cases hiển thị. Classifier chỉ giữ
+  vai trò nhánh so sánh trong notebook/báo cáo.
 
 Usage:
   python scripts/batch_predict.py                              # cả flu + dengue, latest week
@@ -58,6 +64,67 @@ ML_MODELS_DIR = PROJECT_ROOT / "ml_models"
 
 DISEASE_TO_ID = {"flu": 1, "dengue": 2}
 DENGUE_LATEST_VALID_WEEK = (2023, 36)
+
+# Kỳ tham chiếu tính baseline endemic channel (khớp notebook SESSION 5 —
+# compute_endemic_channel). Chỉ dùng năm training để tránh leakage.
+BASELINE_YEARS = {"flu": (2010, 2018), "dengue": (2015, 2018)}
+
+
+def load_bortman_baselines(cur, disease: str, disease_id: int) -> dict[int, tuple[float, float]]:
+    """Baseline (mean, mean+2σ) số ca theo iso_week, gộp mọi quốc gia trong
+    kỳ training. Trả dict[iso_week] -> (mean, upper).
+
+    Lưu ý: baseline theo (iso3, iso_week) mới đúng chuẩn Bortman, nhưng nhiều
+    nước thiếu dữ liệu lịch sử nên fallback về baseline theo iso_week toàn cục
+    được xử lý ở get_baseline_for(). Ở đây tính CẢ hai mức."""
+    start_year, end_year = BASELINE_YEARS[disease]
+    cur.execute(
+        """
+        SELECT iso3, iso_week, raw_count, transformed_value
+        FROM disease_cases
+        WHERE disease_id = %s AND iso_year BETWEEN %s AND %s
+        """,
+        (disease_id, start_year, end_year),
+    )
+    import math
+    import statistics as st
+    from collections import defaultdict
+
+    per_country: dict[tuple[str, int], list[float]] = defaultdict(list)
+    for iso3, week, raw, trans in cur.fetchall():
+        val = raw if raw is not None else (math.expm1(trans) if trans is not None else None)
+        if val is not None:
+            per_country[(iso3, week)].append(float(val))
+
+    baselines: dict[tuple[str, int], tuple[float, float]] = {}
+    for key, vals in per_country.items():
+        mean = st.mean(vals)
+        std = st.stdev(vals) if len(vals) > 1 else 0.0
+        baselines[key] = (mean, mean + 2 * std)
+    return baselines
+
+
+def risk_from_bortman(predicted_cases: float, baseline: tuple[float, float] | None) -> tuple[str, float]:
+    """Đối chiếu số ca dự báo với ngưỡng endemic channel → (risk_level, risk_score).
+
+    risk_score là vị trí tương đối trong dải endemic (0..1), để UI có thang liên
+    tục nhất quán với level (không phải xác suất của classifier)."""
+    if baseline is None:
+        # Không có lịch sử → không đủ căn cứ; số ca gần 0 nên xếp Low.
+        return ("Low", 0.0)
+    mean, upper = baseline
+    if mean == 0 and upper == 0:
+        return ("Low", 0.0) if round(predicted_cases) <= 0 else ("High", 1.0)
+    if predicted_cases < mean:
+        score = 0.0 if mean == 0 else max(0.0, min(0.33, 0.33 * predicted_cases / mean))
+        return ("Low", round(score, 4))
+    if predicted_cases < upper:
+        span = upper - mean
+        frac = 0.0 if span == 0 else (predicted_cases - mean) / span
+        return ("Medium", round(0.33 + 0.34 * frac, 4))
+    # >= upper → High; score bão hòa dần trên ngưỡng
+    over = 0.0 if upper == 0 else min(1.0, (predicted_cases - upper) / max(upper, 1.0))
+    return ("High", round(0.67 + 0.33 * over, 4))
 
 
 def latest_valid_week(disease: str) -> tuple[int, int] | None:
@@ -177,15 +244,15 @@ def fetch_snapshots(cur, disease_id: int, iso_year: int, iso_week: int) -> list[
     return cur.fetchall()
 
 
-def predict_one(disease: str, features: dict) -> dict:
-    """Predict h=1 + classifier cho 1 country."""
+def predict_one(disease: str, features: dict, baseline: tuple[float, float] | None) -> dict:
+    """Predict h=1 (regressor) + risk từ ngưỡng endemic channel (Bortman)."""
     reg = ml_engine.predict_horizon(disease, 1, features)
-    cls = ml_engine.predict_classification(disease, features)
+    risk_level, risk_score = risk_from_bortman(reg["predicted_cases"], baseline)
     return {
         "predicted_value": reg["predicted_log"],
         "predicted_cases": reg["predicted_cases"],
-        "risk_level": cls["risk_level"],
-        "risk_probability": cls["risk_probability"],
+        "risk_level": risk_level,
+        "risk_probability": risk_score,
     }
 
 
@@ -299,6 +366,9 @@ def main():
             for disease in diseases:
                 disease_id = DISEASE_TO_ID[disease]
                 model_version_id = get_model_version_id(cur, disease_id)
+                baselines = load_bortman_baselines(cur, disease, disease_id)
+                print(f"  [{disease}] endemic baselines: {len(baselines)} (iso3,week) cặp "
+                      f"từ {BASELINE_YEARS[disease][0]}-{BASELINE_YEARS[disease][1]}")
 
                 if args.all_snapshots:
                     targets = list_all_snapshot_weeks(cur, disease, disease_id)
@@ -334,7 +404,8 @@ def main():
                     errors = []
                     for iso3, features in snapshots:
                         try:
-                            pred = predict_one(disease, features)
+                            baseline = baselines.get((iso3, iso_week))
+                            pred = predict_one(disease, features, baseline)
                             predicted_rows.append((iso3, pred))
                         except Exception as e:
                             errors.append((iso3, str(e)[:80]))

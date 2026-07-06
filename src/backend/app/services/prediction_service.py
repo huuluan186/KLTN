@@ -69,7 +69,7 @@ def _risk_from_bortman(
         return None
     mean, upper = baseline
     if mean == 0 and upper == 0:
-        return "Low" if predicted_cases == 0 else "High"
+        return "Low" if round(predicted_cases) <= 0 else "High"
     if predicted_cases < mean:
         return "Low"
     if predicted_cases < upper:
