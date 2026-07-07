@@ -70,13 +70,13 @@ DENGUE_LATEST_VALID_WEEK = (2023, 36)
 BASELINE_YEARS = {"flu": (2010, 2018), "dengue": (2015, 2018)}
 
 
-def load_bortman_baselines(cur, disease: str, disease_id: int) -> dict[int, tuple[float, float]]:
-    """Baseline (mean, mean+2σ) số ca theo iso_week, gộp mọi quốc gia trong
-    kỳ training. Trả dict[iso_week] -> (mean, upper).
+def load_bortman_baselines(cur, disease: str, disease_id: int) -> dict[tuple[str, int], tuple[float, float]]:
+    """Baseline endemic channel (mean, mean+2σ) số ca theo (iso3, iso_week),
+    tính trên kỳ training. Trả dict[(iso3, iso_week)] -> (mean, upper).
 
-    Lưu ý: baseline theo (iso3, iso_week) mới đúng chuẩn Bortman, nhưng nhiều
-    nước thiếu dữ liệu lịch sử nên fallback về baseline theo iso_week toàn cục
-    được xử lý ở get_baseline_for(). Ở đây tính CẢ hai mức."""
+    Nước không có dữ liệu lịch sử ở (iso3, iso_week) sẽ không có key tương ứng.
+    Khi đó risk_from_bortman nhận baseline None và xếp Low vì thiếu mức nền để so
+    (không có fallback baseline theo iso_week toàn cục)."""
     start_year, end_year = BASELINE_YEARS[disease]
     cur.execute(
         """

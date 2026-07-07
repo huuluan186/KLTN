@@ -14,7 +14,7 @@ import { useDiseases } from "../hooks/useDiseases";
 import { useForecast } from "../hooks/useForecast";
 import { usePrediction } from "../hooks/usePrediction";
 import { useLatestRiskMap, useRiskMap, useRiskMapPeriods } from "../hooks/useRiskMap";
-import { ECHARTS_COUNTRY_NAMES, ISO3_BY_ECHARTS_NAME } from "../lib/mockRisk";
+import { ECHARTS_COUNTRY_NAMES, ISO3_BY_ECHARTS_NAME } from "../lib/echartsCountries";
 import { isTrainingYear } from "../lib/trainingWindow";
 import { useUIStore } from "../store/uiStore";
 import type { RiskEntry } from "../types/api";

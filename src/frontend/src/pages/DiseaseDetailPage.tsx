@@ -13,7 +13,7 @@ import { useHistory, usePrediction } from "../hooks/usePrediction";
 import FeatureTooltip from "../components/common/FeatureTooltip";
 import InfoTooltip from "../components/common/InfoTooltip";
 import { attachChartResize } from "../lib/echartsResize";
-import { ECHARTS_COUNTRY_NAMES } from "../lib/mockRisk";
+import { ECHARTS_COUNTRY_NAMES } from "../lib/echartsCountries";
 import { isTrainingYear } from "../lib/trainingWindow";
 import { DISEASE_DEFAULTS, useUIStore } from "../store/uiStore";
 import type { AvailableCountry, HistoryPoint } from "../types/api";

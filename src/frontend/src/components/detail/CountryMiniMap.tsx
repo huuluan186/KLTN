@@ -1,7 +1,7 @@
 import * as echarts from "echarts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { attachChartResize } from "../../lib/echartsResize";
-import { ECHARTS_COUNTRY_NAMES } from "../../lib/mockRisk";
+import { ECHARTS_COUNTRY_NAMES } from "../../lib/echartsCountries";
 
 let mapRegistered = false;
 let geoCache: GeoJson | null = null;

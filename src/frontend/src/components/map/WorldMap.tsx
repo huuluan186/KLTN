@@ -1,7 +1,7 @@
 import * as echarts from "echarts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RISK_LEVELS } from "../../constants";
-import { ECHARTS_COUNTRY_NAMES } from "../../lib/mockRisk";
+import { ECHARTS_COUNTRY_NAMES } from "../../lib/echartsCountries";
 import type { RiskEntry } from "../../types/api";
 import { resolveMapThemePalette, type MapTheme, type MapThemePalette } from "./mapTheme";
 
